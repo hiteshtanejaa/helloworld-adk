@@ -1,0 +1,100 @@
+name: Deploy ADK Agent to Agent Engine
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: "us-central1"
+  AGENT_DISPLAY_NAME: "hello-world-adk-agent"
+
+jobs:
+
+  terraform:
+    name: Provision GCP Infrastructure
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="gcp_project_id=${{ env.GCP_PROJECT_ID }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -input=false
+
+      - name: Terraform Apply
+        run: |
+          terraform apply \
+            -var="gcp_project_id=${{ env.GCP_PROJECT_ID }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -input=false \
+            -auto-approve
+
+  deploy:
+    name: Deploy ADK Agent
+    runs-on: ubuntu-latest
+    needs: terraform
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install google-cloud-aiplatform[adk,agent_engines] google-adk vertexai
+
+      - name: Deploy agent to Agent Engine
+        run: python scripts/deploy.py
+        env:
+          GCP_PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ env.GCP_REGION }}
+          AGENT_DISPLAY_NAME: ${{ env.AGENT_DISPLAY_NAME }}
+
+      - name: Deployment complete
+        run: echo "ADK Agent deployed successfully"
